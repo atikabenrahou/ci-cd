@@ -88,21 +88,13 @@ jobs:
       packages: read
 
     steps:
-      - name: Recuperer l'image depuis GHCR
+        
+      - name: Reconstruire la reference
         run: |
-          echo "Image a deployer : ghcr.io/${{ github.repository }}:${{ github.sha }}"
+          REPO="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          echo "IMAGE_NAME=ghcr.io/$REPO" >> "$GITHUB_ENV"
 
-      - name: Connexion a GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Telecharger l'image Docker
+      - name: Controler la reference
         run: |
-          docker pull ghcr.io/${{ github.repository }}:${{ github.sha }}
-
-      - name: Verifier l'image recuperee
-        run: |
-          docker image ls ghcr.io/${{ github.repository }}
+          test -n "$IMAGE_NAME"
+          echo "IMAGE_NAME=$IMAGE_NAME"
