@@ -108,7 +108,7 @@ jobs:
      
       - name: Télécharger l'image
         run: | 
-          docker pull "$IMAGE_NAME:${GITHUB_SHA}"
+          docker pull "$IMAGE_NAME: tag-inexistant"
           docker image ls "$IMAGE_NAME"
       
       - name: Lancer le staging
@@ -129,5 +129,5 @@ jobs:
 
       - name: Verifier le calcul TTC
         run: |
-          curl --fail "http://localhost:3000/api/calcul/ttc?prix=100&tva=20" | grep "999"
+          curl --fail "http://localhost:3000/api/calcul/ttc?prix=100&tva=20" | grep "120"
 
