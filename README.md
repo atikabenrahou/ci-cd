@@ -39,3 +39,4 @@ docker run --rm -p 3000:3000 cicd-demo-s2
 
 ## Remarque pour le TP
 Le dépôt ne contient volontairement pas de fichier `.github/workflows/ci.yml` au départ. Ce workflow sera construit pendant la séance.
+# ci-cd
