@@ -1,4 +1,3 @@
-
 name: CI
 
 on:
@@ -7,14 +6,18 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
+  # JOB 1 : vérifier, construire et publier l’image
   build:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read
+      packages: write
+
     steps:
-      - name: Recuperer le code
+      - name: Récupérer le code
         uses: actions/checkout@v4
 
       - name: Installer Node.js
@@ -31,103 +34,133 @@ jobs:
       - name: Lancer les tests
         run: npm test
 
-      - name: Construire l'image docker
+      - name: Construire l’image Docker
         run: docker build -t cicd-demo-s2 .
 
-      - name: Demarrer le conteneur docker
-        run: docker run -d -p 3000:3000 --name cicd-demo cicd-demo-s2
+      - name: Démarrer le conteneur Docker
+        run: |
+          docker run -d \
+            -p 3000:3000 \
+            --name cicd-demo \
+            cicd-demo-s2
 
-      - name: Attendre l'application
+      - name: Attendre l’application
         run: |
           for i in {1..10}; do
-            if curl --fail http://localhost:3000/api/health; then
+            if curl --fail --silent --show-error \
+              --connect-timeout 2 --max-time 5 \
+              http://localhost:3000/api/health; then
               exit 0
             fi
             sleep 2
           done
+
+          echo "L’application ne répond pas."
+          docker logs cicd-demo
           exit 1
 
-      - name: Verifier le calcul TTC
+      - name: Vérifier le calcul TTC
         run: |
-          curl --fail "http://localhost:3000/api/calcul/ttc?prix=100&tva=20" | grep "120"
+          curl --fail --silent --show-error --max-time 10 \
+            "http://localhost:3000/api/calcul/ttc?prix=100&tva=20" \
+            | grep "120"
 
       - name: Nettoyer le conteneur
         if: always()
         run: docker rm -f cicd-demo || true
 
-      - name: Preparer le nom de l'image
+      - name: Préparer le nom de l’image
         run: |
           REPO="${{ github.repository }}"
-          IMAGE_NAME="ghcr.io/${REPO}"
-          echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
+          IMAGE_NAME="ghcr.io/${REPO,,}"
+          echo "IMAGE_NAME=$IMAGE_NAME" >> "$GITHUB_ENV"
 
-      - name: Connexion a GHCR
+      - name: Reconstruire la référence
+        run: |
+          REPO="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          echo "IMAGE_NAME=ghcr.io/$REPO" >> "$GITHUB_ENV"
+
+      - name: Contrôler la référence
+        run: |
+          test -n "$IMAGE_NAME"
+          echo "IMAGE_NAME=$IMAGE_NAME"
+
+      - name: Se connecter à GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Tagger l'image validee
+      - name: Tagger l’image validée
         run: |
-          docker tag cicd-demo-s2 "$IMAGE_NAME:${GITHUB_SHA}"
+          docker tag cicd-demo-s2 "$IMAGE_NAME:$GITHUB_SHA"
           docker tag cicd-demo-s2 "$IMAGE_NAME:latest"
           docker image ls "$IMAGE_NAME"
 
       - name: Publier dans GHCR
         run: |
-          docker push "$IMAGE_NAME:${GITHUB_SHA}"
+          docker push "$IMAGE_NAME:$GITHUB_SHA"
           docker push "$IMAGE_NAME:latest"
 
+  # JOB 2 : récupérer et tester l’image publiée
   deploy_staging:
     needs: build
     runs-on: ubuntu-latest
     environment: staging
+
     permissions:
       contents: read
       packages: read
 
     steps:
-        
-      - name: Reconstruire la reference
+      # 1
+      - name: Préparer le nom de l’image
         run: |
-          REPO="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
-          echo "IMAGE_NAME=ghcr.io/$REPO" >> "$GITHUB_ENV"
+          REPO="${{ github.repository }}"
+          IMAGE_NAME="ghcr.io/${REPO,,}"
+          echo "IMAGE_NAME=$IMAGE_NAME" >> "$GITHUB_ENV"
 
-      - name: Controler la reference
-        run: |
-          test -n "$IMAGE_NAME"
-          echo "IMAGE_NAME=$IMAGE_NAME"
-
-      - name: Connection à GHCR
+      - name: Connexion à GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-     
+
       - name: Télécharger l'image
-        run: | 
+        run: |
           docker pull "$IMAGE_NAME:${GITHUB_SHA}"
           docker image ls "$IMAGE_NAME"
-      
-      - name: Lancer le staging
+
+      - name: Démarrer staging
         run: |
           docker run -d --name cicd-staging \
             -p 3000:3000 "$IMAGE_NAME:${GITHUB_SHA}"
           docker ps --filter name=cicd-staging
 
-      - name: Attendre l'application
+      - name: Attendre l'API
+        shell: bash
         run: |
-          for i in {1..10}; do
-            if curl --fail http://localhost:3000/api/health; then
+          for i in {1..15}; do
+            if curl --fail --silent \
+              http://localhost:3000/api/health; then
               exit 0
             fi
             sleep 2
           done
+          docker logs cicd-staging
           exit 1
 
-      - name: Verifier le calcul TTC
+      - name: Vérifier le calcul TTC
         run: |
-          curl --fail "http://localhost:3000/api/calcul/ttc?prix=100&tva=20" | grep "999"
-
+          BASE=http://localhost:3000
+          curl --fail --silent \
+            "$BASE/api/calcul/ttc?prix=100&tva=20" \
+            | grep '"prixTTC":999'
+      
+      - name: Nettoyer staging
+        if: always()
+        run: |
+          docker logs cicd-staging || true
+          docker rm -f cicd-staging || true
